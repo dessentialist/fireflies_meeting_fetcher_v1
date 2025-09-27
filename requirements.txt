@@ -1,0 +1,10 @@
+# Core dependencies for Fireflies Meeting Fetcher
+requests>=2.31.0          # HTTP client for API calls
+python-dotenv>=1.0.0      # Environment variable management
+pathlib2>=2.3.7           # Enhanced path handling (Python 3.4+ compatibility)
+
+# Development and linting dependencies (optional)
+black>=23.0.0             # Code formatter
+isort>=5.12.0             # Import sorter
+flake8>=6.0.0             # Code linter
+pylint>=2.17.0            # Advanced code analysis

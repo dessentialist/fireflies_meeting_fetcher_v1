@@ -1,11 +1,13 @@
-# Environment variables
+# Environment variables (contains sensitive API keys)
 .env
 
-# Python
+# Python cache and compiled files
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
+
+# Distribution / packaging
 .Python
 build/
 develop-eggs/
@@ -32,16 +34,15 @@ env/
 ENV/
 env.bak/
 venv.bak/
-.venv/
 
-# IDE
+# IDE files
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
 
-# OS
+# OS generated files
 .DS_Store
 .DS_Store?
 ._*
@@ -50,7 +51,7 @@ venv.bak/
 ehthumbs.db
 Thumbs.db
 
-# Output directory (optional - uncomment if you don't want to track transcript files)
+# Output directory (transcripts)
 transcripts/
 
 # Logs

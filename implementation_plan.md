@@ -49,35 +49,35 @@ fireflies_meeting_fetcher_v1/
 
 ## **Phase-wise Development Plan**
 
-### **Phase 1: Foundation & Setup** (30 mins)
+### **Phase 1: Foundation & Setup** 
 **Objective**: Establish project structure and basic configuration
 - [ ] Create virtual environment and install dependencies
 - [ ] Create `.env.example` template file
 - [ ] Set up logging configuration
 - [ ] Create output directory structure
 
-### **Phase 2: Core API Client** (45 mins)
+### Phase 2: API interaction
 **Objective**: Build robust Fireflies API interaction layer
 - [ ] Implement `FirefliesClient` class with authentication
 - [ ] Create GraphQL query builder for transcripts
 - [ ] Add date range calculation utilities
 - [ ] Implement error handling and retry logic
 
-### **Phase 3: Data Processing** (30 mins)
+### **Phase 3: Data Processing** 
 **Objective**: Transform API responses into usable format
 - [ ] Build `TranscriptFormatter` class for markdown conversion
 - [ ] Implement filename sanitization logic
 - [ ] Create metadata extraction utilities
 - [ ] Add content validation and cleaning
 
-### **Phase 4: Main Orchestration** (30 mins)
+### **Phase 4: Main Orchestration** 
 **Objective**: Tie everything together with main script
 - [ ] Create `main.py` with clear workflow
 - [ ] Implement progress tracking and reporting
 - [ ] Add comprehensive error handling
 - [ ] Create user-friendly output and logging
 
-### **Phase 5: Testing & Refinement** (15 mins)
+### **Phase 5: Testing & Refinement**
 **Objective**: Validate functionality and handle edge cases
 - [ ] Test with real API calls
 - [ ] Validate file output format
