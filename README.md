@@ -69,9 +69,7 @@ Transcripts are saved as markdown files in the `transcripts/` directory with:
 
 ```
 transcripts/
-├── Darpan_Shah_and_Alina.md
-├── Growth_Model_Scenario_Discussion.md
-├── Check_In.md
+├──meeting_1.md
 └── ...
 ```
 
