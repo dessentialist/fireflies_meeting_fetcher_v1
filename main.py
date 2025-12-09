@@ -150,6 +150,16 @@ class FirefliesFetcher:
         try:
             self.logger.info(f"📥 Processing: {title}")
 
+            # If we've already saved this transcript ID in a previous run,
+            # skip the expensive detailed API call and file write.
+            if self.formatter.is_transcript_already_saved(transcript_id):
+                self.logger.info(
+                    f"⏭️  Skipping already-downloaded transcript: {title} "
+                    f"(ID: {transcript_id})"
+                )
+                self.stats["skipped_files"] += 1
+                return True
+
             # Fetch detailed transcript content
             detailed_transcript = self.client.fetch_transcript_details(transcript_id)
 

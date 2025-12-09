@@ -8,6 +8,7 @@ It handles authentication, query construction, error handling, and response pars
 import json
 import logging
 import time
+import re
 from typing import Any, Dict, List, Optional
 
 import requests
@@ -145,6 +146,15 @@ class FirefliesClient:
         """
         Make a GraphQL request to the Fireflies API.
 
+        This method centrally handles:
+        - HTTP-level errors (including basic retries configured on the session)
+        - GraphQL errors surfaced in the JSON body
+        - Fireflies-specific rate limiting errors that return a 200 response
+          with an error message like:
+          "Too many requests. Please retry after 5:22:26 PM (UTC)"
+          In that case, we pause until the suggested time and then retry
+          the same GraphQL request, so callers do not need custom logic.
+
         Args:
             query: GraphQL query string
             variables: Variables for the query
@@ -157,65 +167,157 @@ class FirefliesClient:
         """
         payload = {"query": query, "variables": variables}
 
-        try:
-            self.logger.debug(f"Making GraphQL request: {query[:100]}...")
-            self.logger.debug(f"Variables: {variables}")
-
-            response = self.session.post(
-                self.base_url, json=payload, timeout=30  # 30 second timeout
-            )
-
-            # Log response status
-            self.logger.debug(f"Response status: {response.status_code}")
-
-            # Handle HTTP errors
-            if response.status_code == 401:
-                raise FirefliesAPIError(
-                    "Authentication failed. Please check your API key."
-                )
-            elif response.status_code == 429:
-                raise FirefliesAPIError("Rate limit exceeded. Please try again later.")
-            elif response.status_code >= 400:
-                raise FirefliesAPIError(
-                    f"HTTP error {response.status_code}: {response.text}"
-                )
-
-            # Parse JSON response
+        while True:
             try:
-                data = response.json()
-            except json.JSONDecodeError as e:
-                raise FirefliesAPIError(f"Invalid JSON response: {str(e)}")
+                self.logger.debug(f"Making GraphQL request: {query[:100]}...")
+                self.logger.debug(f"Variables: {variables}")
 
-            # Check for GraphQL errors
-            if "errors" in data and data["errors"]:
-                error_messages = [
-                    error.get("message", "Unknown error") for error in data["errors"]
-                ]
-                error_codes = [
-                    error.get("extensions", {}).get("code") for error in data["errors"]
-                ]
-                raise FirefliesAPIError(
-                    f"GraphQL errors: {'; '.join(error_messages)}",
-                    error_code=error_codes[0] if error_codes else None,
-                    response_data=data,
+                response = self.session.post(
+                    self.base_url, json=payload, timeout=30  # 30 second timeout
                 )
 
-            # Check for missing data
-            if "data" not in data:
-                raise FirefliesAPIError("No data in response", response_data=data)
+                # Log response status
+                self.logger.debug(f"Response status: {response.status_code}")
 
-            return data["data"]
+                # Handle HTTP errors
+                if response.status_code == 401:
+                    raise FirefliesAPIError(
+                        "Authentication failed. Please check your API key."
+                    )
+                elif response.status_code == 429:
+                    # HTTP-level rate limit (less common than GraphQL error body)
+                    self.logger.warning(
+                        "HTTP 429 rate limit encountered. "
+                        "Waiting 60 seconds before retrying..."
+                    )
+                    time.sleep(60)
+                    continue
+                elif response.status_code >= 400:
+                    raise FirefliesAPIError(
+                        f"HTTP error {response.status_code}: {response.text}"
+                    )
 
-        except requests.exceptions.Timeout:
-            raise FirefliesAPIError(
-                "Request timed out. Please check your internet connection."
-            )
-        except requests.exceptions.ConnectionError:
-            raise FirefliesAPIError(
-                "Connection error. Please check your internet connection."
-            )
-        except requests.exceptions.RequestException as e:
-            raise FirefliesAPIError(f"Request failed: {str(e)}")
+                # Parse JSON response
+                try:
+                    data = response.json()
+                except json.JSONDecodeError as e:
+                    raise FirefliesAPIError(f"Invalid JSON response: {str(e)}")
+
+                # Check for GraphQL errors
+                if "errors" in data and data["errors"]:
+                    error_messages = [
+                        error.get("message", "Unknown error")
+                        for error in data["errors"]
+                    ]
+                    error_codes = [
+                        error.get("extensions", {}).get("code")
+                        for error in data["errors"]
+                    ]
+
+                    # Detect Fireflies rate limiting in the GraphQL error body.
+                    # Example message:
+                    # "Too many requests. Please retry after 5:22:26 PM (UTC)"
+                    rate_limit_messages = [
+                        msg
+                        for msg in error_messages
+                        if "too many requests" in msg.lower()
+                        and "retry after" in msg.lower()
+                    ]
+
+                    if rate_limit_messages:
+                        wait_seconds = self._parse_rate_limit_retry_after(
+                            rate_limit_messages[0]
+                        )
+
+                        # Fall back to a conservative default if parsing fails
+                        if wait_seconds is None:
+                            wait_seconds = 60
+
+                        self.logger.warning(
+                            "⏳ Fireflies rate limit reached. "
+                            f"Waiting {wait_seconds:.0f} seconds before retrying GraphQL request..."
+                        )
+                        time.sleep(wait_seconds)
+                        # After waiting, retry the entire GraphQL request
+                        continue
+
+                    # For non-rate-limit GraphQL errors, surface a clean exception
+                    raise FirefliesAPIError(
+                        f"GraphQL errors: {'; '.join(error_messages)}",
+                        error_code=error_codes[0] if error_codes else None,
+                        response_data=data,
+                    )
+
+                # Check for missing data
+                if "data" not in data:
+                    raise FirefliesAPIError("No data in response", response_data=data)
+
+                return data["data"]
+
+            except requests.exceptions.Timeout:
+                raise FirefliesAPIError(
+                    "Request timed out. Please check your internet connection."
+                )
+            except requests.exceptions.ConnectionError:
+                raise FirefliesAPIError(
+                    "Connection error. Please check your internet connection."
+                )
+            except requests.exceptions.RequestException as e:
+                raise FirefliesAPIError(f"Request failed: {str(e)}")
+
+    def _parse_rate_limit_retry_after(self, message: str) -> Optional[int]:
+        """
+        Extract "retry after" time from a Fireflies rate limit message.
+
+        Fireflies currently returns messages like:
+        "Too many requests. Please retry after 5:22:26 PM (UTC)"
+
+        This helper parses the time-of-day component and converts it
+        into a number of seconds to wait from "now" (in UTC).
+
+        Args:
+            message: Full GraphQL error message string
+
+        Returns:
+            Number of seconds to wait from now, or None if parsing fails.
+        """
+        pattern = r"retry after ([0-9]{1,2}:[0-9]{2}:[0-9]{2} [AP]M) \(UTC\)"
+        match = re.search(pattern, message)
+        if not match:
+            return None
+
+        time_str = match.group(1)
+
+        try:
+            # Parse time-of-day, then anchor it to today's date in UTC
+            target_time_struct = time.strptime(time_str, "%I:%M:%S %p")
+        except ValueError:
+            return None
+
+        now_utc = time.gmtime()
+
+        # Build a "retry at" struct_time using today's date but the target time
+        retry_time_struct = (
+            now_utc.tm_year,
+            now_utc.tm_mon,
+            now_utc.tm_mday,
+            target_time_struct.tm_hour,
+            target_time_struct.tm_min,
+            target_time_struct.tm_sec,
+            now_utc.tm_wday,
+            now_utc.tm_yday,
+            now_utc.tm_isdst,
+        )
+
+        now_epoch = time.mktime(now_utc)
+        retry_epoch = time.mktime(retry_time_struct)
+
+        # If the suggested time has already passed today, assume it means "next day"
+        if retry_epoch <= now_epoch:
+            retry_epoch += 24 * 60 * 60  # add one day
+
+        wait_seconds = int(retry_epoch - now_epoch)
+        return max(0, wait_seconds)
 
     def fetch_transcripts(
         self, from_date: str, to_date: str, limit: int = 50, skip: int = 0

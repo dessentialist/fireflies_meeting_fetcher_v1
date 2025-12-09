@@ -10,6 +10,7 @@ import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+import json
 
 
 class TranscriptFormatter:
@@ -35,6 +36,13 @@ class TranscriptFormatter:
         self.output_directory = Path(output_directory)
         self.logger = logger or logging.getLogger(__name__)
 
+        # Internal cache of transcript ID -> filename mappings.
+        # This lets us quickly check if a meeting has already been saved on
+        # previous runs, so we can skip redundant API calls.
+        self._id_index: Dict[str, str] = {}
+        self._index_loaded: bool = False
+        self._index_file = self.output_directory / ".fireflies_index.json"
+
         # Ensure output directory exists
         self.output_directory.mkdir(parents=True, exist_ok=True)
 
@@ -42,6 +50,77 @@ class TranscriptFormatter:
             f"TranscriptFormatter initialized with output directory: "
             f"{self.output_directory}"
         )
+
+    def _load_index(self) -> None:
+        """
+        Load the transcript ID index from disk, if it exists.
+
+        The index maps Fireflies transcript IDs to the markdown filenames
+        we have already written for them. This is intentionally lazy-loaded
+        so that normal runs only pay the cost once.
+        """
+        if self._index_loaded:
+            return
+
+        if self._index_file.exists():
+            try:
+                with open(self._index_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if isinstance(data, dict):
+                    # Ensure keys and values are strings
+                    self._id_index = {str(k): str(v) for k, v in data.items()}
+            except Exception as exc:
+                self.logger.warning(
+                    f"Failed to load transcript index '{self._index_file}': {exc}"
+                )
+                self._id_index = {}
+
+        self._index_loaded = True
+
+    def _save_index(self) -> None:
+        """
+        Persist the transcript ID index to disk.
+
+        The file lives alongside the markdown transcripts and is safe to
+        delete; it will simply be re-created on the next run.
+        """
+        try:
+            with open(self._index_file, "w", encoding="utf-8") as f:
+                json.dump(self._id_index, f, indent=2, sort_keys=True)
+        except Exception as exc:
+            self.logger.warning(
+                f"Failed to save transcript index '{self._index_file}': {exc}"
+            )
+
+    def is_transcript_already_saved(self, transcript_id: Optional[str]) -> bool:
+        """
+        Check whether we have already saved a transcript with this ID.
+
+        This is used by the main fetcher to avoid calling the detailed
+        transcript API for meetings that are already on disk.
+        """
+        if not transcript_id:
+            return False
+
+        self._load_index()
+        return transcript_id in self._id_index
+
+    def record_transcript_saved(
+        self, transcript_id: Optional[str], file_path: Path
+    ) -> None:
+        """
+        Record that a transcript with the given ID has been saved.
+
+        Args:
+            transcript_id: Fireflies transcript ID (may be None if missing)
+            file_path: Path to the markdown file on disk
+        """
+        if not transcript_id:
+            return
+
+        self._load_index()
+        self._id_index[transcript_id] = file_path.name
+        self._save_index()
 
     def sanitize_filename(self, title: str, max_length: int = 100) -> str:
         """
@@ -343,6 +422,11 @@ class TranscriptFormatter:
             # Write file
             with open(file_path, "w", encoding="utf-8") as f:
                 f.write(markdown_content)
+
+            # Update the on-disk index so future runs know this
+            # transcript ID has already been downloaded.
+            transcript_id = transcript_data.get("id")
+            self.record_transcript_saved(transcript_id, file_path)
 
             self.logger.info(f"Saved transcript: {file_path}")
             return file_path

@@ -137,8 +137,10 @@ fireflies_meeting_fetcher_v1/
 ### Configuration Options
 - `FIREFLIES_API_KEY`: Your Fireflies API key (required)
 - `OUTPUT_DIRECTORY`: Directory for output files (default: 'transcripts')
-- `MONTHS_TO_FETCH`: Number of months to fetch (default: 2)
+- `MONTHS_TO_FETCH`: Number of months to fetch (default: 2), used when no absolute dates are provided
 - `MAX_TRANSCRIPTS_PER_QUERY`: API query limit (default: 50)
+- `FIREFLIES_FROM_DATE`: Optional absolute start date (ISO 8601-like, e.g. `2020-01-01T00:00:00.000Z`). If set, this takes precedence over `MONTHS_TO_FETCH`.
+- `FIREFLIES_TO_DATE`: Optional absolute end date (ISO 8601-like). If omitted while `FIREFLIES_FROM_DATE` is set, the current UTC time is used.
 
 ### Code Quality
 - Run formatting: `python make_lint.py`

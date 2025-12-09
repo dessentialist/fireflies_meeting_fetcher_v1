@@ -54,6 +54,19 @@ FIREFLIES_API_KEY=your_api_key_here
 OUTPUT_DIRECTORY=transcripts
 MONTHS_TO_FETCH=2
 MAX_TRANSCRIPTS_PER_QUERY=50
+
+# Optional absolute date range overrides (take precedence over MONTHS_TO_FETCH)
+# If FIREFLIES_FROM_DATE is set, the fetcher will use this exact range instead
+# of the relative MONTHS_TO_FETCH window.
+#
+# Examples of accepted formats:
+# - 2020-01-01
+# - 2020-01-01T00:00:00Z
+# - 2020-01-01T00:00:00.000Z
+#
+# Uncomment and customize if you want a fixed date range:
+# FIREFLIES_FROM_DATE=2020-01-01T00:00:00.000Z
+# FIREFLIES_TO_DATE=2025-01-01T00:00:00.000Z
 ```
 
 ## 📁 Output

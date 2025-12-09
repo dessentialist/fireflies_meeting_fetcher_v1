@@ -34,11 +34,22 @@ class Config:
         # Output configuration
         self.output_directory: str = os.getenv("OUTPUT_DIRECTORY", "transcripts")
 
-        # Query configuration
+        # Query configuration (relative date-based)
         self.months_to_fetch: int = int(os.getenv("MONTHS_TO_FETCH", "2"))
         self.max_transcripts_per_query: int = int(
             os.getenv("MAX_TRANSCRIPTS_PER_QUERY", "50")
         )
+
+        # Optional absolute date range overrides (ISO 8601 strings).
+        # If FIREFLIES_FROM_DATE is provided, it takes precedence over MONTHS_TO_FETCH.
+        # FIREFLIES_TO_DATE is optional; if omitted, "now" (current UTC time) is used.
+        #
+        # Examples of accepted formats:
+        # - 2024-01-01
+        # - 2024-01-01T00:00:00Z
+        # - 2024-01-01T00:00:00.000Z
+        self.from_date_override: str | None = os.getenv("FIREFLIES_FROM_DATE")
+        self.to_date_override: str | None = os.getenv("FIREFLIES_TO_DATE")
 
         # Validate configuration
         self._validate_config()
@@ -91,18 +102,94 @@ class Config:
         if not self.api_base_url.startswith("https://"):
             raise ValueError("API_BASE_URL must be a valid HTTPS URL.")
 
+    def _parse_iso_datetime(self, value: str, var_name: str) -> datetime:
+        """
+        Parse a flexible ISO 8601-like datetime string from environment variables.
+
+        This helper exists so that non-expert users can specify dates in a few
+        common human-friendly ways, while still giving the API the strict
+        ISO 8601 format it expects.
+
+        Accepted example formats:
+        - "2024-01-01"
+        - "2024-01-01T00:00:00Z"
+        - "2024-01-01T00:00:00.000Z"
+
+        Args:
+            value: Raw string from environment
+            var_name: Name of the environment variable (used in error messages)
+
+        Returns:
+            Parsed datetime instance (naive, assumed to be UTC)
+
+        Raises:
+            ValueError: If the string cannot be parsed in a supported format
+        """
+        value = value.strip()
+
+        # Try the most explicit "Z" suffixed formats first
+        try:
+            if value.endswith("Z"):
+                # Try with microseconds, then without
+                try:
+                    return datetime.strptime(value, "%Y-%m-%dT%H:%M:%S.%fZ")
+                except ValueError:
+                    return datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ")
+
+            # Fallbacks: full ISO string or simple date-only string
+            try:
+                # datetime.fromisoformat handles many common ISO variants
+                return datetime.fromisoformat(value)
+            except ValueError:
+                # Allow simple "YYYY-MM-DD" date-only values
+                return datetime.strptime(value, "%Y-%m-%d")
+
+        except ValueError as exc:
+            raise ValueError(
+                f"Invalid datetime format for {var_name}: '{value}'. "
+                "Use an ISO 8601 style value like '2024-01-01T00:00:00.000Z' "
+                "or a simple date like '2024-01-01'."
+            ) from exc
+
     def get_date_range(self) -> tuple[datetime, datetime]:
         """
         Calculate the date range for fetching transcripts.
 
+        Priority order:
+        1. If FIREFLIES_FROM_DATE is set, use the absolute date range specified
+           by FIREFLIES_FROM_DATE / FIREFLIES_TO_DATE (or "now" if TO is omitted).
+        2. Otherwise, fall back to the relative MONTHS_TO_FETCH window.
+
         Returns:
             Tuple of (start_date, end_date) in UTC timezone
         """
+        # If an explicit "from" date is provided, that takes precedence.
+        if self.from_date_override and self.from_date_override.strip():
+            from_dt = self._parse_iso_datetime(
+                self.from_date_override, "FIREFLIES_FROM_DATE"
+            )
+
+            # If no explicit "to" date is provided, default to "now" (UTC)
+            if self.to_date_override and self.to_date_override.strip():
+                to_dt = self._parse_iso_datetime(
+                    self.to_date_override, "FIREFLIES_TO_DATE"
+                )
+            else:
+                to_dt = datetime.utcnow()
+
+            if from_dt > to_dt:
+                raise ValueError(
+                    "FIREFLIES_FROM_DATE cannot be later than FIREFLIES_TO_DATE / now."
+                )
+
+            return from_dt, to_dt
+
+        # Fallback: use the relative MONTHS_TO_FETCH window.
         # End date is current time in UTC
         end_date = datetime.utcnow()
 
-        # Start date is months_to_fetch months ago
-        # Handle different month lengths properly
+        # Start date is months_to_fetch months ago.
+        # Handle different month lengths properly.
         start_date = end_date
         for _ in range(self.months_to_fetch):
             # Go back one month, handling year boundaries
